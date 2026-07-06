@@ -1,0 +1,113 @@
+name: Build Unsigned iOS WebView App
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: '应用名称'
+        required: true
+        default: 'MyWebApp'
+      app_url:
+        description: '加载的网址'
+        required: true
+        default: 'https://example.com'
+      icon_path:
+        description: '图标文件路径 (PNG)'
+        required: true
+        default: 'assets/icon.png'
+      launch_path:
+        description: '启动图文件路径 (PNG)'
+        required: true
+        default: 'assets/launch.png'
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: 安装依赖
+        run: |
+          brew install imagemagick
+
+      - name: 生成随机包名和版本号
+        run: |
+          BUNDLE_ID="com.$(openssl rand -hex 2).$(openssl rand -hex 2)"
+          VERSION="$(jot -r 1 1 5).$(jot -r 1 0 9).$(jot -r 1 0 9)"
+          echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: 创建 Swift WebView 项目
+        run: |
+          mkdir WebApp && cd WebApp
+          cat > WebApp.swift <<'EOF'
+          import SwiftUI
+          import WebKit
+
+          struct WebView: UIViewRepresentable {
+              let url: String
+              func makeUIView(context: Context) -> WKWebView {
+                  let webView = WKWebView()
+                  webView.load(URLRequest(url: URL(string: url)!))
+                  return webView
+              }
+              func updateUIView(_ uiView: WKWebView, context: Context) {}
+          }
+
+          @main
+          struct WebApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      WebView(url: ProcessInfo.processInfo.environment["APP_URL"] ?? "https://apple.com")
+                  }
+              }
+          }
+          EOF
+
+          # 生成最小 Info.plist
+          cat > Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleIdentifier</key>
+            <string>${BUNDLE_ID}</string>
+            <key>CFBundleName</key>
+            <string>${{ github.event.inputs.app_name }}</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION}</string>
+            <key>CFBundleExecutable</key>
+            <string>WebApp</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: 处理图标和启动图
+        run: |
+          mkdir -p WebApp/Assets.xcassets/AppIcon.appiconset
+          mkdir -p WebApp/Assets.xcassets/LaunchImage.launchimage
+          sips -z 60 60 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-60.png
+          sips -z 120 120 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-120.png
+          sips -z 180 180 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-180.png
+          sips -z 640 1136 ${{ github.event.inputs.launch_path }} --out WebApp/Assets.xcassets/LaunchImage.launchimage/launch.png
+
+      - name: 编译 App
+        run: |
+          xcodebuild -scheme WebApp -configuration Release build \
+            PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID \
+            VERSION=$VERSION \
+            APP_NAME="${{ github.event.inputs.app_name }}" \
+            APP_URL="${{ github.event.inputs.app_url }}"
+
+      - name: 打包未签名 IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/WebApp.app Payload/
+          zip -r WebApp.ipa Payload
+
+      - name: 上传到 GoFile
+        run: |
+          RESPONSE=$(curl -F "file=@WebApp.ipa" https://store1.gofile.io/uploadFile)
+          echo "上传结果: $RESPONSE"
