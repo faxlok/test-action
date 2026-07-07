@@ -102,9 +102,7 @@ jobs:
           cp -r build/WebApp.app Payload/
           zip -r WebApp.ipa Payload
 
-      - name: Upload IPA to GitHub Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.inputs.app_name }}-Unsigned
-          path: WebApp.ipa
-          retention-days: 7
+      - name: 上传到 GoFile
+        run: |
+          RESPONSE=$(curl -F "file=@WebApp.ipa" https://store1.gofile.io/uploadFile)
+          echo "上传结果: $RESPONSE"
