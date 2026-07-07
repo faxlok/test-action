@@ -41,23 +41,31 @@ jobs:
       - name: Create Swift Source Files
         run: |
           mkdir -p WebApp/Sources
-          
-          # 还原纯净的 SwiftUI WebView 容器，启动图剥离出来交给系统底层托管
-          cat > WebApp/Sources/WebApp.swift <<EOF
+
+          cat > WebApp/Sources/WebApp.swift <<'SWIFT'
           import SwiftUI
           import WebKit
 
           struct WebView: UIViewRepresentable {
               let url: String
+
               func makeUIView(context: Context) -> WKWebView {
-                  let webView = WKWebView()
+                  let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
                   webView.scrollView.contentInsetAdjustmentBehavior = .never
+                  webView.scrollView.bounces = false
+                  webView.scrollView.showsHorizontalScrollIndicator = false
+                  webView.scrollView.showsVerticalScrollIndicator = false
+                  webView.backgroundColor = .black
+                  webView.isOpaque = false
                   if let parsedURL = URL(string: url) {
                       webView.load(URLRequest(url: parsedURL))
                   }
                   return webView
               }
-              func updateUIView(_ uiView: WKWebView, context: Context) {}
+
+              func updateUIView(_ uiView: WKWebView, context: Context) {
+                  uiView.frame = UIScreen.main.bounds
+              }
           }
 
           @main
@@ -65,20 +73,18 @@ jobs:
               var body: some Scene {
                   WindowGroup {
                       WebView(url: "${{ github.event.inputs.app_url }}")
-                          .edgesIgnoringSafeArea(.all) // 网页强制全屏幕铺满
+                          .ignoresSafeArea(.all)
                   }
               }
           }
-          EOF
+          SWIFT
 
-          # 创建 iOS 官方标准的全屏 LaunchScreen 故事板（利用底层约束强行破除黑边）
-          cat > WebApp/Sources/LaunchScreen.storyboard <<EOF
+          cat > WebApp/Sources/LaunchScreen.storyboard <<'STORYBOARD'
           <?xml version="1.0" encoding="UTF-8"?>
-          <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="21507" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+          <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="21507" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="NO" colorMatched="YES" initialViewController="01J-lp-oVM">
               <device id="retina6_12" orientation="portrait" appearance="light"/>
               <dependencies>
                   <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="21505"/>
-                  <capability name="Safe area layout guides" minToolsVersion="9.0"/>
                   <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
               </dependencies>
               <scenes>
@@ -93,8 +99,7 @@ jobs:
                                           <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                                       </imageView>
                                   </subviews>
-                                  <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
-                                  <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                  <color key="backgroundColor" white="0" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
                                   <constraints>
                                       <constraint firstItem="i8P-xe-gZ2" firstAttribute="leading" secondItem="Ze5-6b-2t3" secondAttribute="leading" id="A1A-1A-A1a"/>
                                       <constraint firstAttribute="trailing" secondItem="i8P-xe-gZ2" secondAttribute="trailing" id="B1B-1B-B1b"/>
@@ -109,11 +114,11 @@ jobs:
                   </scene>
               </scenes>
           </document>
-          EOF
+          STORYBOARD
 
       - name: Create Info.plist Manually
         run: |
-          cat > WebApp/Info.plist <<EOF
+          cat > WebApp/Info.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -130,12 +135,17 @@ jobs:
               <string>1</string>
               <key>CFBundleExecutable</key>
               <string>\$(EXECUTABLE_NAME)</string>
-              
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
+              <key>UIRequiresFullScreen</key>
+              <true/>
+              <key>UIStatusBarHidden</key>
+              <true/>
+              <key>UIViewControllerBasedStatusBarAppearance</key>
+              <false/>
           </dict>
           </plist>
-          EOF
+          PLIST
 
       - name: Prepare Assets (Icon & Launch Image)
         run: |
@@ -153,9 +163,8 @@ jobs:
           }
           EOF
 
-          # 2. 启动图核心修复：利用 sips 命令，强制把你的 100x100 像素小图拉伸到高素质全面屏物理分辨率（2688高 x 1242宽）
-          # 这样可以 100% 绕过 iOS 针对低分辨率资产启动图的安全降级黑边惩罚！
-          sips -s format png -z 2688 1242 ${{ github.event.inputs.launch_path }} --out WebApp/Sources/Assets.xcassets/LaunchImage.imageset/launch.png
+          # 2. 启动图核心修复：把启动图拉伸为全屏竖屏分辨率，避免系统在启动时因为比例不匹配而留下黑边。
+          sips -s format png -z 2796 1290 ${{ github.event.inputs.launch_path }} --out WebApp/Sources/Assets.xcassets/LaunchImage.imageset/launch.png
           cat > WebApp/Sources/Assets.xcassets/LaunchImage.imageset/Contents.json <<EOF
           {
             "images" : [
