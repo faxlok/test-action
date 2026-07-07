@@ -10,40 +10,31 @@ on:
       app_url:
         description: '加载的网址'
         required: true
-        default: 'https://www.baidu.com'
-      icon_path:
-        description: '图标文件路径 (PNG)'
-        required: true
-        default: 'assets/icon.jpg'
-      launch_path:
-        description: '启动图文件路径 (PNG)'
-        required: true
-        default: 'assets/icon.jpg'
+        default: 'https://www.apple.com'
 
 jobs:
   build:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: 安装依赖
-        run: |
-          brew untap aws/tap
-          brew install imagemagick
+      - name: Install XcodeGen
+        run: brew install xcodegen
 
-      - name: 生成随机包名和版本号
+      - name: Generate Random Bundle ID and Version
         run: |
           BUNDLE_ID="com.$(openssl rand -hex 2).$(openssl rand -hex 2)"
           VERSION="$(jot -r 1 1 5).$(jot -r 1 0 9).$(jot -r 1 0 9)"
           echo "BUNDLE_ID=$BUNDLE_ID" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      - name: 创建 Swift WebView 项目
+      - name: Create Swift Source Files
         run: |
-          mkdir WebApp && cd WebApp
-          cat > WebApp.swift <<'EOF'
+          mkdir -p WebApp/Sources
+          # 直接将输入的 URL 写入 Swift 代码，取代无效的 ProcessInfo 环境变量读取
+          cat > WebApp/Sources/WebApp.swift <<EOF
           import SwiftUI
           import WebKit
 
@@ -51,7 +42,9 @@ jobs:
               let url: String
               func makeUIView(context: Context) -> WKWebView {
                   let webView = WKWebView()
-                  webView.load(URLRequest(url: URL(string: url)!))
+                  if let parsedURL = URL(string: url) {
+                      webView.load(URLRequest(url: parsedURL))
+                  }
                   return webView
               }
               func updateUIView(_ uiView: WKWebView, context: Context) {}
@@ -61,54 +54,56 @@ jobs:
           struct WebApp: App {
               var body: some Scene {
                   WindowGroup {
-                      WebView(url: ProcessInfo.processInfo.environment["APP_URL"] ?? "https://apple.com")
+                      WebView(url: "${{ github.event.inputs.app_url }}")
                   }
               }
           }
           EOF
 
-          # 生成最小 Info.plist
-          cat > Info.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleIdentifier</key>
-            <string>${BUNDLE_ID}</string>
-            <key>CFBundleName</key>
-            <string>${{ github.event.inputs.app_name }}</string>
-            <key>CFBundleVersion</key>
-            <string>${VERSION}</string>
-            <key>CFBundleExecutable</key>
-            <string>WebApp</string>
-          </dict>
-          </plist>
+      - name: Generate Xcode Project (using XcodeGen)
+        run: |
+          # 动态生成项目配置，强制关闭签名机制
+          cat > project.yml <<EOF
+          name: WebApp
+          options:
+            bundleIdPrefix: com.example
+          targets:
+            WebApp:
+              type: application
+              platform: iOS
+              deploymentTarget: "14.0"
+              sources: [WebApp/Sources]
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: ${{ env.BUNDLE_ID }}
+                  MARKETING_VERSION: ${{ env.VERSION }}
+                  PRODUCT_NAME: "${{ github.event.inputs.app_name }}"
+                  CODE_SIGNING_REQUIRED: "NO"
+                  CODE_SIGNING_ALLOWED: "NO"
+                  CODE_SIGN_IDENTITY: ""
           EOF
+          xcodegen generate
 
-      - name: 处理图标和启动图
+      - name: Build Unsigned App
         run: |
-          mkdir -p WebApp/Assets.xcassets/AppIcon.appiconset
-          mkdir -p WebApp/Assets.xcassets/LaunchImage.launchimage
-          sips -z 60 60 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-60.jpg
-          sips -z 120 120 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-120.jpg
-          sips -z 180 180 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-180.jpg
-          sips -z 640 1136 ${{ github.event.inputs.launch_path }} --out WebApp/Assets.xcassets/LaunchImage.launchimage/launch.jpg
+          # 指定 CONFIGURATION_BUILD_DIR 确保我们知道产物输出在哪里
+          xcodebuild -project WebApp.xcodeproj \
+            -scheme WebApp \
+            -configuration Release \
+            -sdk iphoneos \
+            CONFIGURATION_BUILD_DIR=build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
-      - name: 编译 App
-        run: |
-          xcodebuild -scheme WebApp -configuration Release build \
-            PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID \
-            VERSION=$VERSION \
-            APP_NAME="${{ github.event.inputs.app_name }}" \
-            APP_URL="${{ github.event.inputs.app_url }}"
-
-      - name: 打包未签名 IPA
+      - name: Package IPA
         run: |
           mkdir -p Payload
-          cp -r build/Release-iphoneos/WebApp.app Payload/
+          cp -r build/WebApp.app Payload/
           zip -r WebApp.ipa Payload
 
-      - name: 上传到 GoFile
-        run: |
-          RESPONSE=$(curl -F "file=@WebApp.ipa" https://store1.gofile.io/uploadFile)
-          echo "上传结果: $RESPONSE"
+      - name: Upload IPA to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.app_name }}-Unsigned
+          path: WebApp.ipa
+          retention-days: 7
