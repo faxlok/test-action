@@ -81,7 +81,7 @@ jobs:
                   CODE_SIGNING_REQUIRED: "NO"
                   CODE_SIGNING_ALLOWED: "NO"
                   CODE_SIGN_IDENTITY: ""
-                  GENERATE_INFOPLIST_FILE: "YES"
+                  GENERATE_INFOPLIST_FILE: "YES" 
           EOF
           xcodegen generate
 
