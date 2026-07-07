@@ -42,7 +42,6 @@ jobs:
         run: |
           mkdir -p WebApp/Sources
           
-          # 核心修复：修改 Swift 代码，让 WebView 忽略安全区域，填满整个屏幕（消除黑边）
           cat > WebApp/Sources/WebApp.swift <<EOF
           import SwiftUI
           import WebKit
@@ -51,7 +50,7 @@ jobs:
               let url: String
               func makeUIView(context: Context) -> WKWebView {
                   let webView = WKWebView()
-                  // 允许网页内容缩放适配
+                  // 禁用 WebView 内部的安全区域缩进，配合外层实现真正全屏
                   webView.scrollView.contentInsetAdjustmentBehavior = .never
                   if let parsedURL = URL(string: url) {
                       webView.load(URLRequest(url: parsedURL))
@@ -66,26 +65,48 @@ jobs:
               var body: some Scene {
                   WindowGroup {
                       WebView(url: "${{ github.event.inputs.app_url }}")
-                          .edgesIgnoringSafeArea(.all) // 👈 强制视图扩展到屏幕最边缘（包含刘海和底部黑条）
+                          .edgesIgnoringSafeArea(.all) // 强制填满刘海屏和底部黑条
                   }
               }
           }
           EOF
 
+      - name: Create Info.plist Manually
+        run: |
+          # 手动手搓一个现代的 Info.plist，注入核心全屏密钥
+          cat > WebApp/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleIdentifier</key>
+              <string>\$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+              <key>CFBundleName</key>
+              <string>\$(PRODUCT_NAME)</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>\$(MARKETING_VERSION)</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>CFBundleExecutable</key>
+              <string>\$(EXECUTABLE_NAME)</string>
+              
+              <key>UILaunchScreen</key>
+              <dict>
+                  <key>UIImageName</key>
+                  <string>LaunchImage</string>
+              </dict>
+          </dict>
+          </plist>
+          EOF
+
       - name: Prepare Assets (Icon & Launch Image)
         run: |
-          # 创建标准的 Assets 目录结构
           mkdir -p WebApp/Sources/Assets.xcassets/AppIcon.appiconset
           mkdir -p WebApp/Sources/Assets.xcassets/LaunchImage.imageset
-          
-          # 检查用户输入的图片是否存在，如果不存在则创建一个临时的纯色块防止编译报错
-          if [ ! -f "${{ github.event.inputs.icon_path }}" ]; then
-            mkdir -p $(dirname "${{ github.event.inputs.icon_path }}")
-            sudo sips -g size /Applications/Xcode.app/Contents/Developer/Platforms/WatchOS.platform/Developer/Library/Xcode/Templates/Project\ Templates/iOS/Application/App.\ PlatformChoose/Images.xcassets/AppIcon.appiconset/Icon-App-83.5x83.5@2x.png || true
-            # 兜底：如果找不到就用 sips 凭空造一张，这里假设文件存在。
-          fi
 
-          # 1. 生成图标（现代 Xcode 开启单张大图自适应，只需提供一张 1024x1024 的 AppIcon 即可）
+          # 1. 图标处理
           sips -s format png -z 1024 1024 ${{ github.event.inputs.icon_path }} --out WebApp/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
           cat > WebApp/Sources/Assets.xcassets/AppIcon.appiconset/Contents.json <<EOF
           {
@@ -97,14 +118,11 @@ jobs:
                 "filename" : "icon-1024.png"
               }
             ],
-            "info" : {
-              "version" : 1,
-              "author" : "xcode"
-            }
+            "info" : { "version" : 1, "author" : "xcode" }
           }
           EOF
 
-          # 2. 生成启动图（单张图片自适应）
+          # 2. 启动图处理 (转为标准 PNG 并用通用自适应配置)
           sips -s format png ${{ github.event.inputs.launch_path }} --out WebApp/Sources/Assets.xcassets/LaunchImage.imageset/launch.png
           cat > WebApp/Sources/Assets.xcassets/LaunchImage.imageset/Contents.json <<EOF
           {
@@ -114,10 +132,7 @@ jobs:
                 "filename" : "launch.png"
               }
             ],
-            "info" : {
-              "version" : 1,
-              "author" : "xcode"
-            }
+            "info" : { "version" : 1, "author" : "xcode" }
           }
           EOF
 
@@ -125,14 +140,14 @@ jobs:
         run: |
           cat > project.yml <<EOF
           name: WebApp
-          options:
-            bundleIdPrefix: com.example
           targets:
             WebApp:
               type: application
               platform: iOS
               deploymentTarget: "14.0"
               sources: [WebApp/Sources]
+              info:
+                path: WebApp/Info.plist
               settings:
                 base:
                   PRODUCT_BUNDLE_IDENTIFIER: ${{ env.BUNDLE_ID }}
@@ -141,11 +156,7 @@ jobs:
                   CODE_SIGNING_REQUIRED: "NO"
                   CODE_SIGNING_ALLOWED: "NO"
                   CODE_SIGN_IDENTITY: ""
-                  GENERATE_INFOPLIST_FILE: "YES"
                   ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
-                  # 👈 核心修复：通过配置 INFOPLIST_KEY 启用纯图片作为自适应启动屏（彻底解决无启动图导致的上下黑边）
-                  INFOPLIST_KEY_UILaunchImageFile: "LaunchImage"
-                  INFOPLIST_KEY_UILaunchScreen_StoryboardName: ""
           EOF
           xcodegen generate
 
