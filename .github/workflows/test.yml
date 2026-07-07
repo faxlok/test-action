@@ -12,13 +12,13 @@ on:
         required: true
         default: 'https://www.apple.com'
       icon_path:
-        description: '图标文件路径 (JPG/PNG)'
+        description: '图标文件路径 (PNG)'
         required: true
-        default: 'assets/icon.jpg'
+        default: 'assets/icon.png' # 👈 已更新为 png
       launch_path:
-        description: '启动图文件路径 (JPG/PNG)'
+        description: '启动图文件路径 (PNG)'
         required: true
-        default: 'assets/icon.jpg'
+        default: 'assets/launch.png' # 👈 已更新为 png
 
 jobs:
   build:
@@ -50,7 +50,6 @@ jobs:
               let url: String
               func makeUIView(context: Context) -> WKWebView {
                   let webView = WKWebView()
-                  // 禁用 WebView 内部的安全区域缩进，配合外层实现真正全屏
                   webView.scrollView.contentInsetAdjustmentBehavior = .never
                   if let parsedURL = URL(string: url) {
                       webView.load(URLRequest(url: parsedURL))
@@ -62,10 +61,29 @@ jobs:
 
           @main
           struct WebApp: App {
+              @State private var showSplash = true
+
               var body: some Scene {
                   WindowGroup {
-                      WebView(url: "${{ github.event.inputs.app_url }}")
-                          .edgesIgnoringSafeArea(.all) // 强制填满刘海屏和底部黑条
+                      ZStack {
+                          if showSplash {
+                              Image("LaunchImage")
+                                  .resizable()
+                                  .scaledToFill()
+                                  .edgesIgnoringSafeArea(.all)
+                                  .onAppear {
+                                      DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                          withAnimation(.easeInOut(duration: 0.4)) {
+                                              showSplash = false
+                                          }
+                                      }
+                                  }
+                          } else {
+                              WebView(url: "${{ github.event.inputs.app_url }}")
+                                  .edgesIgnoringSafeArea(.all)
+                          }
+                      }
+                      .edgesIgnoringSafeArea(.all)
                   }
               }
           }
@@ -73,7 +91,6 @@ jobs:
 
       - name: Create Info.plist Manually
         run: |
-          # 手动手搓一个现代的 Info.plist，注入核心全屏密钥
           cat > WebApp/Info.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,12 +108,8 @@ jobs:
               <string>1</string>
               <key>CFBundleExecutable</key>
               <string>\$(EXECUTABLE_NAME)</string>
-              
               <key>UILaunchScreen</key>
-              <dict>
-                  <key>UIImageName</key>
-                  <string>LaunchImage</string>
-              </dict>
+              <dict/>
           </dict>
           </plist>
           EOF
@@ -111,26 +124,18 @@ jobs:
           cat > WebApp/Sources/Assets.xcassets/AppIcon.appiconset/Contents.json <<EOF
           {
             "images" : [
-              {
-                "idiom" : "universal",
-                "platform" : "ios",
-                "size" : "1024x1024",
-                "filename" : "icon-1024.png"
-              }
+              { "idiom" : "universal", "platform" : "ios", "size" : "1024x1024", "filename" : "icon-1024.png" }
             ],
             "info" : { "version" : 1, "author" : "xcode" }
           }
           EOF
 
-          # 2. 启动图处理 (转为标准 PNG 并用通用自适应配置)
+          # 2. 启动图处理
           sips -s format png ${{ github.event.inputs.launch_path }} --out WebApp/Sources/Assets.xcassets/LaunchImage.imageset/launch.png
           cat > WebApp/Sources/Assets.xcassets/LaunchImage.imageset/Contents.json <<EOF
           {
             "images" : [
-              {
-                "idiom" : "universal",
-                "filename" : "launch.png"
-              }
+              { "idiom" : "universal", "filename" : "launch.png" }
             ],
             "info" : { "version" : 1, "author" : "xcode" }
           }
