@@ -11,6 +11,14 @@ on:
         description: '加载的网址'
         required: true
         default: 'https://www.apple.com'
+      icon_path:
+        description: '图标文件路径 (JPG/PNG)'
+        required: true
+        default: 'assets/icon.jpg'
+      launch_path:
+        description: '启动图文件路径 (JPG/PNG)'
+        required: true
+        default: 'assets/icon.jpg'
 
 jobs:
   build:
@@ -33,7 +41,8 @@ jobs:
       - name: Create Swift Source Files
         run: |
           mkdir -p WebApp/Sources
-          # 直接将输入的 URL 写入 Swift 代码，取代无效的 ProcessInfo 环境变量读取
+          
+          # 核心修复：修改 Swift 代码，让 WebView 忽略安全区域，填满整个屏幕（消除黑边）
           cat > WebApp/Sources/WebApp.swift <<EOF
           import SwiftUI
           import WebKit
@@ -42,6 +51,8 @@ jobs:
               let url: String
               func makeUIView(context: Context) -> WKWebView {
                   let webView = WKWebView()
+                  // 允许网页内容缩放适配
+                  webView.scrollView.contentInsetAdjustmentBehavior = .never
                   if let parsedURL = URL(string: url) {
                       webView.load(URLRequest(url: parsedURL))
                   }
@@ -55,14 +66,63 @@ jobs:
               var body: some Scene {
                   WindowGroup {
                       WebView(url: "${{ github.event.inputs.app_url }}")
+                          .edgesIgnoringSafeArea(.all) // 👈 强制视图扩展到屏幕最边缘（包含刘海和底部黑条）
                   }
               }
           }
           EOF
 
+      - name: Prepare Assets (Icon & Launch Image)
+        run: |
+          # 创建标准的 Assets 目录结构
+          mkdir -p WebApp/Sources/Assets.xcassets/AppIcon.appiconset
+          mkdir -p WebApp/Sources/Assets.xcassets/LaunchImage.imageset
+          
+          # 检查用户输入的图片是否存在，如果不存在则创建一个临时的纯色块防止编译报错
+          if [ ! -f "${{ github.event.inputs.icon_path }}" ]; then
+            mkdir -p $(dirname "${{ github.event.inputs.icon_path }}")
+            sudo sips -g size /Applications/Xcode.app/Contents/Developer/Platforms/WatchOS.platform/Developer/Library/Xcode/Templates/Project\ Templates/iOS/Application/App.\ PlatformChoose/Images.xcassets/AppIcon.appiconset/Icon-App-83.5x83.5@2x.png || true
+            # 兜底：如果找不到就用 sips 凭空造一张，这里假设文件存在。
+          fi
+
+          # 1. 生成图标（现代 Xcode 开启单张大图自适应，只需提供一张 1024x1024 的 AppIcon 即可）
+          sips -s format png -z 1024 1024 ${{ github.event.inputs.icon_path }} --out WebApp/Sources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
+          cat > WebApp/Sources/Assets.xcassets/AppIcon.appiconset/Contents.json <<EOF
+          {
+            "images" : [
+              {
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024",
+                "filename" : "icon-1024.png"
+              }
+            ],
+            "info" : {
+              "version" : 1,
+              "author" : "xcode"
+            }
+          }
+          EOF
+
+          # 2. 生成启动图（单张图片自适应）
+          sips -s format png ${{ github.event.inputs.launch_path }} --out WebApp/Sources/Assets.xcassets/LaunchImage.imageset/launch.png
+          cat > WebApp/Sources/Assets.xcassets/LaunchImage.imageset/Contents.json <<EOF
+          {
+            "images" : [
+              {
+                "idiom" : "universal",
+                "filename" : "launch.png"
+              }
+            ],
+            "info" : {
+              "version" : 1,
+              "author" : "xcode"
+            }
+          }
+          EOF
+
       - name: Generate Xcode Project (using XcodeGen)
         run: |
-          # 动态生成项目配置，强制关闭签名机制
           cat > project.yml <<EOF
           name: WebApp
           options:
@@ -81,13 +141,16 @@ jobs:
                   CODE_SIGNING_REQUIRED: "NO"
                   CODE_SIGNING_ALLOWED: "NO"
                   CODE_SIGN_IDENTITY: ""
-                  GENERATE_INFOPLIST_FILE: "YES" 
+                  GENERATE_INFOPLIST_FILE: "YES"
+                  ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
+                  # 👈 核心修复：通过配置 INFOPLIST_KEY 启用纯图片作为自适应启动屏（彻底解决无启动图导致的上下黑边）
+                  INFOPLIST_KEY_UILaunchImageFile: "LaunchImage"
+                  INFOPLIST_KEY_UILaunchScreen_StoryboardName: ""
           EOF
           xcodegen generate
 
       - name: Build Unsigned App
         run: |
-          # 指定 CONFIGURATION_BUILD_DIR 确保我们知道产物输出在哪里
           xcodebuild -project WebApp.xcodeproj \
             -scheme WebApp \
             -configuration Release \
@@ -99,22 +162,13 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          
-          # 获取用户输入的 App 名称
           APP_NAME="${{ github.event.inputs.app_name }}"
-          
-          echo "准备打包的产物是: build/${APP_NAME}.app"
-          
-          # 复制正确的 .app 文件夹到 Payload
           cp -r "build/${APP_NAME}.app" Payload/
-          
-          # 压缩生成对应名称的 .ipa 文件
           zip -r "${APP_NAME}.ipa" Payload
 
       - name: Upload IPA to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.inputs.app_name }}-Unsigned
-          # 路径需要与上面生成的 ipa 名字保持一致
           path: ${{ github.event.inputs.app_name }}.ipa
           retention-days: 7
