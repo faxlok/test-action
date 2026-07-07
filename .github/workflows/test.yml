@@ -89,10 +89,10 @@ jobs:
         run: |
           mkdir -p WebApp/Assets.xcassets/AppIcon.appiconset
           mkdir -p WebApp/Assets.xcassets/LaunchImage.launchimage
-          sips -z 60 60 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-60.png
-          sips -z 120 120 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-120.png
-          sips -z 180 180 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-180.png
-          sips -z 640 1136 ${{ github.event.inputs.launch_path }} --out WebApp/Assets.xcassets/LaunchImage.launchimage/launch.png
+          sips -z 60 60 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-60.jpg
+          sips -z 120 120 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-120.jpg
+          sips -z 180 180 ${{ github.event.inputs.icon_path }} --out WebApp/Assets.xcassets/AppIcon.appiconset/icon-180.jpg
+          sips -z 640 1136 ${{ github.event.inputs.launch_path }} --out WebApp/Assets.xcassets/LaunchImage.launchimage/launch.jpg
 
       - name: 编译 App
         run: |
