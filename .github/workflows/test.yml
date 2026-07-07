@@ -99,15 +99,22 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          # 自动全局查找 WebApp.app 文件夹的位置 (排除 Payload 目录防止死循环)
-          APP_PATH=$(find . -name "WebApp.app" -type d -not -path "./Payload/*" | head -n 1)
-          echo "找到编译好的 App 路径: $APP_PATH"
-          # 将找到的 app 复制到 Payload 目录
-          cp -r "$APP_PATH" Payload/
-          # 压缩成 ipa
-          zip -r WebApp.ipa Payload
+          
+          # 获取用户输入的 App 名称
+          APP_NAME="${{ github.event.inputs.app_name }}"
+          
+          echo "准备打包的产物是: build/${APP_NAME}.app"
+          
+          # 复制正确的 .app 文件夹到 Payload
+          cp -r "build/${APP_NAME}.app" Payload/
+          
+          # 压缩生成对应名称的 .ipa 文件
+          zip -r "${APP_NAME}.ipa" Payload
 
-      - name: 上传到 GoFile
-        run: |
-          RESPONSE=$(curl -F "file=@WebApp.ipa" https://store1.gofile.io/uploadFile)
-          echo "上传结果: $RESPONSE"
+      - name: Upload IPA to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.app_name }}-Unsigned
+          # 路径需要与上面生成的 ipa 名字保持一致
+          path: ${{ github.event.inputs.app_name }}.ipa
+          retention-days: 7
