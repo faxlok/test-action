@@ -10,15 +10,15 @@ on:
       app_url:
         description: '加载的网址'
         required: true
-        default: 'https://example.com'
+        default: 'https://www.baidu.com'
       icon_path:
         description: '图标文件路径 (PNG)'
         required: true
-        default: 'assets/icon.png'
+        default: 'assets/icon.jpg'
       launch_path:
         description: '启动图文件路径 (PNG)'
         required: true
-        default: 'assets/launch.png'
+        default: 'assets/icon.jpg'
 
 jobs:
   build:
@@ -30,6 +30,7 @@ jobs:
 
       - name: 安装依赖
         run: |
+          brew untap aws/tap
           brew install imagemagick
 
       - name: 生成随机包名和版本号
